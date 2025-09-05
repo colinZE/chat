@@ -16,6 +16,7 @@ package database
 
 import (
 	"context"
+	"crypto/rand"
 	"time"
 
 	"github.com/openimsdk/tools/db/mongoutil"
@@ -23,10 +24,12 @@ import (
 	"github.com/openimsdk/tools/db/tx"
 
 	"github.com/openimsdk/chat/pkg/common/constant"
+	"github.com/openimsdk/chat/pkg/common/db/dbutil"
 	admindb "github.com/openimsdk/chat/pkg/common/db/model/admin"
 	"github.com/openimsdk/chat/pkg/common/db/model/chat"
 	"github.com/openimsdk/chat/pkg/common/db/table/admin"
 	chatdb "github.com/openimsdk/chat/pkg/common/db/table/chat"
+	"github.com/openimsdk/chat/pkg/ldap"
 )
 
 type ChatDatabaseInterface interface {
@@ -56,6 +59,7 @@ type ChatDatabaseInterface interface {
 	UserLoginCountTotal(ctx context.Context, before *time.Time) (int64, error)
 	UserLoginCountRangeEverydayTotal(ctx context.Context, start *time.Time, end *time.Time) (map[string]int64, int64, error)
 	DelUserAccount(ctx context.Context, userIDs []string) error
+	SyncLDAPUser(ctx context.Context, userInfo *ldap.UserInfo, account string) (string, error)
 }
 
 func NewChatDatabase(cli *mongoutil.Client) (ChatDatabaseInterface, error) {
@@ -290,4 +294,141 @@ func (o *ChatDatabase) DelUserAccount(ctx context.Context, userIDs []string) err
 		}
 		return nil
 	})
+}
+
+// SyncLDAPUser 同步LDAP用户信息到本地数据库
+func (o *ChatDatabase) SyncLDAPUser(ctx context.Context, userInfo *ldap.UserInfo, account string) (string, error) {
+	// 尝试通过邮箱查找用户记录
+	credential, err := o.credential.TakeAccount(ctx, userInfo.Mail)
+	if err != nil {
+		if dbutil.IsDBNotFound(err) {
+			// 用户不存在，创建新用户
+			return o.createLDAPUser(ctx, userInfo, account)
+		}
+		return "", err
+	}
+
+	// 用户已存在，智能更新用户信息（不覆盖用户自定义字段）
+	userID := credential.UserID
+	err = o.updateLDAPUserSmart(ctx, userID, userInfo)
+	if err != nil {
+		return "", err
+	}
+
+	return userID, nil
+}
+
+// createLDAPUser 创建新的LDAP用户
+func (o *ChatDatabase) createLDAPUser(ctx context.Context, userInfo *ldap.UserInfo, account string) (string, error) {
+	userID := o.genUserID()
+	now := time.Now()
+
+	// 创建用户凭证记录 - 使用邮箱作为登录凭证
+	credential := &chatdb.Credential{
+		UserID:      userID,
+		Account:     userInfo.Mail, // 使用LDAP的邮箱作为登录账号
+		Type:        constant.CredentialEmail,
+		AllowChange: false, // LDAP用户不允许修改账号
+	}
+
+	// 创建用户账号记录（不存储密码）
+	accountRecord := &chatdb.Account{
+		UserID:         userID,
+		Password:       "", // LDAP用户不存储密码
+		OperatorUserID: "", // LDAP用户创建时没有操作者
+		ChangeTime:     now,
+		CreateTime:     now,
+	}
+
+	// 创建用户属性记录
+	attribute := &chatdb.Attribute{
+		UserID:         userID,
+		Account:        userInfo.SAMAccountName,
+		PhoneNumber:    userInfo.TelephoneNumber,
+		AreaCode:       "", // 从电话号码中提取
+		Email:          userInfo.Mail,
+		Nickname:       userInfo.DisplayName,
+		FaceURL:        "",
+		Gender:         0,           // 默认值
+		BirthTime:      time.Time{}, // 默认值
+		ChangeTime:     now,
+		CreateTime:     now,
+		AllowVibration: constant.DefaultAllowVibration,
+		AllowBeep:      constant.DefaultAllowBeep,
+		AllowAddFriend: constant.DefaultAllowAddFriend,
+		RegisterType:   constant.LDAPRegister,
+	}
+
+	// 创建注册记录
+	register := &chatdb.Register{
+		UserID:      userID,
+		DeviceID:    "", // 登录时获取
+		IP:          "", // 登录时获取
+		Platform:    "LDAP",
+		AccountType: "LDAP",
+		Mode:        constant.UserMode,
+		CreateTime:  now,
+	}
+
+	// 保存到数据库
+	err := o.RegisterUser(ctx, register, accountRecord, attribute, []*chatdb.Credential{credential})
+	if err != nil {
+		return "", err
+	}
+
+	return userID, nil
+}
+
+// updateLDAPUserSmart 智能更新LDAP用户信息，不覆盖用户自定义字段
+func (o *ChatDatabase) updateLDAPUserSmart(ctx context.Context, userID string, userInfo *ldap.UserInfo) error {
+	// 获取当前用户信息
+	currentAttr, err := o.attribute.Take(ctx, userID)
+	if err != nil {
+		return err
+	}
+
+	// 只更新LDAP提供的字段，保留用户自定义的字段
+	updateData := map[string]any{
+		"change_time": time.Now(),
+	}
+
+	// 只更新LDAP有值的字段，如果用户已经自定义了昵称，则不覆盖
+	if userInfo.Mail != "" && userInfo.Mail != currentAttr.Email {
+		updateData["email"] = userInfo.Mail
+	}
+
+	if userInfo.TelephoneNumber != "" && userInfo.TelephoneNumber != currentAttr.PhoneNumber {
+		updateData["phone_number"] = userInfo.TelephoneNumber
+	}
+
+	// 昵称策略：如果用户没有自定义昵称（还是LDAP的DisplayName），则更新
+	// 如果用户已经自定义了昵称，则不覆盖
+	if userInfo.DisplayName != "" && currentAttr.Nickname == currentAttr.Account {
+		// 如果当前昵称还是账号名（说明用户没有自定义），则更新为LDAP的DisplayName
+		updateData["nickname"] = userInfo.DisplayName
+	}
+
+	// 如果没有需要更新的字段，直接返回
+	if len(updateData) <= 1 { // 只有change_time
+		return nil
+	}
+
+	// 使用UpdateUseInfo方法更新用户信息
+	return o.UpdateUseInfo(ctx, userID, updateData, nil, nil)
+}
+
+// genUserID 生成用户ID
+func (o *ChatDatabase) genUserID() string {
+	const l = 10
+	data := make([]byte, l)
+	rand.Read(data)
+	chars := []byte("0123456789")
+	for i := 0; i < len(data); i++ {
+		if i == 0 {
+			data[i] = chars[1:][data[i]%9]
+		} else {
+			data[i] = chars[data[i]%10]
+		}
+	}
+	return string(data)
 }

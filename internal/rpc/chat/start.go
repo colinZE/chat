@@ -20,6 +20,7 @@ import (
 	"github.com/openimsdk/chat/pkg/common/config"
 	"github.com/openimsdk/chat/pkg/common/db/database"
 	"github.com/openimsdk/chat/pkg/email"
+	"github.com/openimsdk/chat/pkg/ldap"
 	chatClient "github.com/openimsdk/chat/pkg/rpclient/chat"
 	"github.com/openimsdk/chat/pkg/sms"
 )
@@ -89,6 +90,7 @@ type chatSvr struct {
 	Livekit         *rtc.LiveKit
 	ChatAdminUserID string
 	AllowRegister   bool
+	LDAP            *ldap.LDAPService
 }
 
 func (o *chatSvr) WithAdminUser(ctx context.Context) context.Context {

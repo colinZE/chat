@@ -188,6 +188,18 @@ type Log struct {
 	WithStack           bool   `mapstructure:"withStack"`
 }
 
+type LDAP struct {
+	Enable bool `mapstructure:"enable"`
+	Server string `mapstructure:"server"`
+	Port   int    `mapstructure:"port"`
+	UseSSL bool   `mapstructure:"useSSL"`
+	BindUser     string `mapstructure:"BindUser"`	
+	BindPassword string `mapstructure:"BindPassword"`
+	BindDN string `mapstructure:"BindDN"`
+	Attributes   []string `mapstructure:"Attributes"`
+	UserFilter string `mapstructure:"UserFilter"`
+}
+
 type AllConfig struct {
 	AdminAPI  API
 	ChatAPI   API
@@ -198,6 +210,7 @@ type AllConfig struct {
 	Mongo     Mongo
 	Redis     Redis
 	Share     Share
+	LDAP      LDAP
 }
 
 func (a *AllConfig) Name2Config(name string) any {
@@ -220,6 +233,8 @@ func (a *AllConfig) Name2Config(name string) any {
 		return a.Redis
 	case ShareFileName:
 		return a.Share
+	case LDAPConfigFileName:
+		return a.LDAP
 	default:
 		return nil
 	}
@@ -236,5 +251,6 @@ func (a *AllConfig) GetConfigNames() []string {
 		ChatAPIChatCfgFileName,
 		ChatRPCAdminCfgFileName,
 		ChatRPCChatCfgFileName,
+		LDAPConfigFileName,
 	}
 }

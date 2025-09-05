@@ -420,8 +420,9 @@ func (o *chatSvr) Login(ctx context.Context, req *chat.LoginReq) (*chat.LoginRes
 	}
 	var (
 		err        error
-		credential *chatdb.Credential
 		acc        string
+		credential *chatdb.Credential
+		userID     string
 	)
 
 	switch {
@@ -443,14 +444,38 @@ func (o *chatSvr) Login(ctx context.Context, req *chat.LoginReq) (*chat.LoginRes
 	default:
 		return nil, errs.ErrArgs.WrapMsg("account or phone number or email must be set")
 	}
-	credential, err = o.Database.TakeCredentialByAccount(ctx, acc)
-	if err != nil {
-		if dbutil.IsDBNotFound(err) {
-			return nil, eerrs.ErrAccountNotFound.WrapMsg("user unregistered")
+	// credential, err = o.Database.TakeCredentialByAccount(ctx, acc)
+	// if err != nil {
+	// 	if dbutil.IsDBNotFound(err) {
+	// 		return nil, eerrs.ErrAccountNotFound.WrapMsg("user unregistered")
+	// 	}
+	// 	return nil, err
+	// }
+
+	if o.LDAP != nil && o.LDAP.Enable() {
+		// LDAP模式：不检查本地账号，直接验证LDAP
+		userInfo, err := o.LDAP.Authenticate(ctx, acc, req.Password)
+		if err != nil {
+			return nil, eerrs.ErrPassword.Wrap()
 		}
-		return nil, err
+		// LDAP验证成功后，同步用户信息到本地数据库
+		userID, err = o.Database.SyncLDAPUser(ctx, userInfo, acc)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// 传统模式：检查本地账号
+		credential, err = o.Database.TakeCredentialByAccount(ctx, acc)
+		if err != nil {
+			if dbutil.IsDBNotFound(err) {
+				return nil, eerrs.ErrAccountNotFound.WrapMsg("user unregistered")
+			}
+			return nil, err
+		}
+		userID = credential.UserID
 	}
-	if err := o.Admin.CheckLogin(ctx, credential.UserID, req.Ip); err != nil {
+
+	if err := o.Admin.CheckLogin(ctx, userID, req.Ip); err != nil {
 		return nil, err
 	}
 	var verifyCodeID *string
@@ -477,20 +502,25 @@ func (o *chatSvr) Login(ctx context.Context, req *chat.LoginReq) (*chat.LoginRes
 			verifyCodeID = &id
 		}
 	} else {
-		account, err := o.Database.TakeAccount(ctx, credential.UserID)
-		if err != nil {
-			return nil, err
+		if o.LDAP == nil || !o.LDAP.Enable() {
+			// 传统模式：验证本地密码
+			account, err := o.Database.TakeAccount(ctx, userID)
+			if err != nil {
+				return nil, err
+			}
+			if account.Password != req.Password {
+				return nil, eerrs.ErrPassword.Wrap()
+			}
 		}
-		if account.Password != req.Password {
-			return nil, eerrs.ErrPassword.Wrap()
-		}
+		// LDAP模式：密码验证已经在上面完成了
 	}
-	chatToken, err := o.Admin.CreateToken(ctx, credential.UserID, constant.NormalUser)
+	chatToken, err := o.Admin.CreateToken(ctx, userID, constant.NormalUser)
 	if err != nil {
 		return nil, err
 	}
 	record := &chatdb.UserLoginRecord{
-		UserID:    credential.UserID,
+		// UserID:    credential.UserID,
+		UserID:    userID,
 		LoginTime: time.Now(),
 		IP:        req.Ip,
 		DeviceID:  req.DeviceID,
@@ -504,7 +534,8 @@ func (o *chatSvr) Login(ctx context.Context, req *chat.LoginReq) (*chat.LoginRes
 			return nil, err
 		}
 	}
-	resp.UserID = credential.UserID
+	// resp.UserID = credential.UserID
+	resp.UserID = userID
 	resp.ChatToken = chatToken.Token
 	return resp, nil
 }

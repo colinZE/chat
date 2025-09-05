@@ -103,6 +103,7 @@ const (
 	AccountRegister = iota
 	EmailRegister
 	PhoneRegister
+	LDAPRegister
 )
 
 const (
