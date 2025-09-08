@@ -15,9 +15,10 @@
 package chat
 
 import (
+	"time"
+
 	"github.com/openimsdk/chat/pkg/common/constant"
 	chatdb "github.com/openimsdk/chat/pkg/common/db/table/chat"
-	"time"
 
 	"github.com/openimsdk/tools/errs"
 
@@ -51,7 +52,7 @@ func ToDBAttributeUpdate(req *chat.UpdateUserInfoReq) (map[string]any, error) {
 		update["level"] = req.Level.Value
 	}
 	if req.Birth != nil {
-		update["birth_time"] = time.UnixMilli(req.Birth.Value)
+		update["birth_time"] = time.Unix(req.Birth.Value, 0)
 	}
 	if req.AllowAddFriend != nil {
 		update["allow_add_friend"] = req.AllowAddFriend.Value

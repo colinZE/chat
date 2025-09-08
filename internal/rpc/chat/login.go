@@ -463,6 +463,8 @@ func (o *chatSvr) Login(ctx context.Context, req *chat.LoginReq) (*chat.LoginRes
 		if err != nil {
 			return nil, err
 		}
+
+		// LDAP用户在OpenIM中的注册将在API层处理
 	} else {
 		// 传统模式：检查本地账号
 		credential, err = o.Database.TakeCredentialByAccount(ctx, acc)

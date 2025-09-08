@@ -189,15 +189,15 @@ type Log struct {
 }
 
 type LDAP struct {
-	Enable bool `mapstructure:"enable"`
-	Server string `mapstructure:"server"`
-	Port   int    `mapstructure:"port"`
-	UseSSL bool   `mapstructure:"useSSL"`
-	BindUser     string `mapstructure:"BindUser"`	
-	BindPassword string `mapstructure:"BindPassword"`
-	BindDN string `mapstructure:"BindDN"`
+	Enable       bool     `mapstructure:"enable"`
+	Server       string   `mapstructure:"server"`
+	Port         int      `mapstructure:"port"`
+	UseSSL       bool     `mapstructure:"useSSL"`
+	BindUser     string   `mapstructure:"BindUser"`
+	BindPassword string   `mapstructure:"BindPassword"`
+	BindDN       string   `mapstructure:"BindDN"`
 	Attributes   []string `mapstructure:"Attributes"`
-	UserFilter string `mapstructure:"UserFilter"`
+	UserFilter   string   `mapstructure:"UserFilter"`
 }
 
 type AllConfig struct {

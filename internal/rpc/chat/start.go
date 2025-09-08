@@ -31,6 +31,7 @@ type Config struct {
 	MongodbConfig config.Mongo
 	Discovery     config.Discovery
 	Share         config.Share
+	LDAP          config.LDAP
 }
 
 func Start(ctx context.Context, config *Config, client discovery.SvcDiscoveryRegistry, server *grpc.Server) error {
@@ -75,6 +76,23 @@ func Start(ctx context.Context, config *Config, client discovery.SvcDiscoveryReg
 	}
 	srv.Livekit = rtc.NewLiveKit(config.RpcConfig.LiveKit.Key, config.RpcConfig.LiveKit.Secret, config.RpcConfig.LiveKit.URL)
 	srv.AllowRegister = config.RpcConfig.AllowRegister
+
+	// 初始化LDAP服务
+	if config.LDAP.Enable {
+		ldapConfig := &ldap.Config{
+			Enable:       config.LDAP.Enable,
+			Server:       config.LDAP.Server,
+			Port:         config.LDAP.Port,
+			UseSSL:       config.LDAP.UseSSL,
+			BindUser:     config.LDAP.BindUser,
+			BindPassword: config.LDAP.BindPassword,
+			BindDN:       config.LDAP.BindDN,
+			Attributes:   config.LDAP.Attributes,
+			UserFilter:   config.LDAP.UserFilter,
+		}
+		srv.LDAP = ldap.NewLDAPService(ldapConfig)
+	}
+
 	chat.RegisterChatServer(server, &srv)
 	return nil
 }

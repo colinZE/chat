@@ -15,6 +15,7 @@
 package chat
 
 import (
+	"context"
 	"io"
 	"time"
 
@@ -179,6 +180,12 @@ func (o *Api) Login(c *gin.Context) {
 		return
 	}
 	apiCtx := mctx.WithApiToken(c, adminToken)
+
+	// 确保用户在OpenIM中存在（特别是LDAP用户）
+	if err := o.ensureUserInOpenIM(apiCtx, resp.UserID, req.Email); err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
 
 	imToken, err := o.imApiCaller.GetUserToken(apiCtx, resp.UserID, req.Platform)
 	if err != nil {
@@ -355,4 +362,58 @@ func (o *Api) LatestApplicationVersion(c *gin.Context) {
 
 func (o *Api) PageApplicationVersion(c *gin.Context) {
 	a2r.Call(c, admin.AdminClient.PageApplicationVersion, o.adminClient)
+}
+
+// ensureUserInOpenIM 确保用户在OpenIM中存在
+func (o *Api) ensureUserInOpenIM(ctx context.Context, userID string, email string) error {
+	// 从chat数据库获取用户信息
+	userInfo, err := o.chatClient.FindUserPublicInfo(ctx, &chatpb.FindUserPublicInfoReq{UserIDs: []string{userID}})
+	if err != nil {
+		return err
+	}
+
+	if len(userInfo.Users) == 0 {
+		return errs.New("user not found in chat database").Wrap()
+	}
+
+	chatUser := userInfo.Users[0]
+	imUser := &sdkws.UserInfo{
+		UserID:     userID,
+		Nickname:   chatUser.Nickname,
+		FaceURL:    chatUser.FaceURL,
+		CreateTime: time.Now().UnixMilli(),
+	}
+
+	// 检查用户是否已在OpenIM中存在
+	users, err := o.imApiCaller.GetUsersInfo(ctx, []string{userID})
+	if err != nil || len(users) == 0 {
+		// 用户不存在，注册用户
+		err = o.imApiCaller.RegisterUser(ctx, []*sdkws.UserInfo{imUser})
+		if err != nil {
+			return err
+		}
+		log.ZInfo(ctx, "User registered in OpenIM", "userID", userID, "nickname", chatUser.Nickname)
+	} else {
+		// 用户已存在，检查是否需要更新信息
+		existingUser := users[0]
+		if existingUser.Nickname != chatUser.Nickname {
+			// 更新用户昵称
+			err = o.imApiCaller.UpdateUserInfo(ctx, userID, chatUser.Nickname, chatUser.FaceURL)
+			if err != nil {
+				log.ZWarn(ctx, "Failed to update user nickname in OpenIM", err, "userID", userID)
+			} else {
+				log.ZInfo(ctx, "User nickname updated in OpenIM", "userID", userID, "nickname", chatUser.Nickname)
+			}
+		}
+
+		// 重新注册以确保状态正确（解决GetUserToken失败的问题）
+		err = o.imApiCaller.RegisterUser(ctx, []*sdkws.UserInfo{imUser})
+		if err != nil {
+			log.ZWarn(ctx, "Failed to re-register user in OpenIM", err, "userID", userID)
+		} else {
+			log.ZInfo(ctx, "User re-registered in OpenIM", "userID", userID, "nickname", chatUser.Nickname)
+		}
+	}
+
+	return nil
 }

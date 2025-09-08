@@ -1,18 +1,15 @@
-# [ldap]
-# host = ldap.caiwu.corp
-# port = 389
-# use.ssl = false
-# bind.dn = OU=宜信公司,OU=HABROOT,DC=creditease,DC=corp
-# bind.user = paas_ldap
-# bind.password = !%!!))#6203qqq
-# user.filter = (userPrincipalName=%s)
-# attributes = name,mail,userPrincipalName,displayName,sAMAccountName
-ldap:
-  host: ldap.caiwu.corp
-  port: 389
-  use.ssl: false
-  bind.dn: OU=宜信公司,OU=HABROOT,DC=creditease,DC=corp
-  bind.user: paas_ldap
-  bind.password: 
-  user.filter: (userPrincipalName=%s)
-  attributes: name,mail,userPrincipalName,displayName,sAMAccountName
+enable: true
+server: "ldap.caiwu.corp"
+port: 389
+useSSL: false
+bindUser: "paas_ldap"
+bindPassword: "!%!!))#6203qqq"
+bindDN: "OU=宜信公司,OU=HABROOT,DC=creditease,DC=corp"
+attributes:
+  - "userPrincipalName"
+  - "sAMAccountName"
+  - "displayName"
+  - "mail"
+  - "telephoneNumber"
+  - "name"
+userFilter: "(mail=%s)"
