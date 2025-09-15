@@ -52,9 +52,9 @@ func (o *Api) AdminLogin(c *gin.Context) {
 		apiresp.GinError(c, err)
 		return
 	}
+	// 如果版本为空，设置默认版本号
 	if req.Version == "" {
-		apiresp.GinError(c, errs.New("openim-admin-front version too old, please use new version").Wrap())
-		return
+		req.Version = "1.0.0" // 设置默认版本号
 	}
 	loginResp, err := o.adminClient.Login(c, req)
 	if err != nil {

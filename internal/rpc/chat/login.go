@@ -2,6 +2,8 @@ package chat
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
 	"math/rand"
 	"strconv"
@@ -510,7 +512,10 @@ func (o *chatSvr) Login(ctx context.Context, req *chat.LoginReq) (*chat.LoginRes
 			if err != nil {
 				return nil, err
 			}
-			if account.Password != req.Password {
+			// 将前端发送的明文密码进行MD5加密后比较
+			hash := md5.Sum([]byte(req.Password))
+			md5Password := hex.EncodeToString(hash[:])
+			if account.Password != md5Password {
 				return nil, eerrs.ErrPassword.Wrap()
 			}
 		}
