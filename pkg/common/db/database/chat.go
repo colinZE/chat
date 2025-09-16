@@ -62,6 +62,7 @@ type ChatDatabaseInterface interface {
 	DelUserAccount(ctx context.Context, userIDs []string) error
 	SyncLDAPUser(ctx context.Context, userInfo *ldap.UserInfo, account string) (string, error)
 	SyncRCTokenUser(ctx context.Context, userInfo *rctokenlogin.UserInfo, account string) (string, error)
+	GetUserIDByEmail(ctx context.Context, email string) (string, error)
 }
 
 func NewChatDatabase(cli *mongoutil.Client) (ChatDatabaseInterface, error) {
@@ -550,4 +551,13 @@ func (o *ChatDatabase) updateRCTokenUserSmart(ctx context.Context, userID string
 
 	// 使用UpdateUseInfo方法更新用户信息
 	return o.UpdateUseInfo(ctx, userID, updateData, nil, nil)
+}
+
+// GetUserIDByEmail 通过邮箱获取用户ID
+func (o *ChatDatabase) GetUserIDByEmail(ctx context.Context, email string) (string, error) {
+	credential, err := o.credential.TakeAccount(ctx, email)
+	if err != nil {
+		return "", err
+	}
+	return credential.UserID, nil
 }

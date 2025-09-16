@@ -13,27 +13,35 @@ import (
 	"github.com/gin-gonic/gin"
 	chatmw "github.com/openimsdk/chat/internal/api/mw"
 	"github.com/openimsdk/chat/internal/api/util"
+	"github.com/openimsdk/chat/pkg/cache"
 	"github.com/openimsdk/chat/pkg/common/config"
+	"github.com/openimsdk/chat/pkg/common/db/database"
 	"github.com/openimsdk/chat/pkg/common/imapi"
 	"github.com/openimsdk/chat/pkg/common/kdisc"
 	disetcd "github.com/openimsdk/chat/pkg/common/kdisc/etcd"
 	adminclient "github.com/openimsdk/chat/pkg/protocol/admin"
 	chatclient "github.com/openimsdk/chat/pkg/protocol/chat"
+	"github.com/openimsdk/chat/pkg/rctokenlogin"
+	"github.com/openimsdk/tools/db/mongoutil"
 	"github.com/openimsdk/tools/discovery/etcd"
 	"github.com/openimsdk/tools/errs"
 	"github.com/openimsdk/tools/mw"
 	"github.com/openimsdk/tools/system/program"
 	"github.com/openimsdk/tools/utils/datautil"
 	"github.com/openimsdk/tools/utils/runtimeenv"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 type Config struct {
-	ApiConfig config.API
-	Discovery config.Discovery
-	Share     config.Share
-	Redis     config.Redis
+	ApiConfig     config.API
+	Discovery     config.Discovery
+	Share         config.Share
+	Redis         config.Redis
+	Support       config.Support
+	RCToken       config.RCToken
+	MongodbConfig config.Mongo
 
 	RuntimeEnv string
 }
@@ -70,6 +78,32 @@ func Start(ctx context.Context, index int, cfg *Config) error {
 		ChatAdminUserID: cfg.Share.ChatAdmin[0],
 	}
 	adminApi := New(chatClient, adminClient, im, &base)
+	adminApi.Support = cfg.Support
+
+	// 初始化数据库连接
+	mgocli, err := mongoutil.NewMongoDB(ctx, cfg.MongodbConfig.Build())
+	if err != nil {
+		return err
+	}
+	adminApi.Database, err = database.NewChatDatabase(mgocli)
+	if err != nil {
+		return err
+	}
+
+	// 初始化缓存管理器
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:     cfg.Redis.Address[0],
+		Password: cfg.Redis.Password,
+		DB:       cfg.Redis.DB,
+	})
+	adminApi.CacheManager = cache.NewCacheManager(redisClient)
+
+	// 初始化RCToken服务
+	rcConfig := &rctokenlogin.Config{
+		Enable: cfg.RCToken.Enable,
+		URL:    cfg.RCToken.URL,
+	}
+	adminApi.RCToken = rctokenlogin.NewService(rcConfig)
 	mwApi := chatmw.New(adminClient)
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
@@ -154,4 +188,7 @@ func SetChatRoute(router gin.IRouter, chat *Api, mw *chatmw.MW) {
 	applicationGroup.POST("/page_versions", chat.PageApplicationVersion)
 
 	router.Group("/callback").POST("/open_im", chat.OpenIMCallback) // Callback
+
+	// Support
+	router.GET("/rc/support/list", chat.SupportUrls) // 获取客服用户列表
 }

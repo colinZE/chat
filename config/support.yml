@@ -1,0 +1,7 @@
+supportUsers:
+  - userID: "support001"
+    nickname: "客服小王"
+  - userID: "support002" 
+    nickname: "客服小李"
+  - userID: "support003"
+    nickname: "技术支持"

@@ -205,6 +205,15 @@ type RCToken struct {
 	URL    string `mapstructure:"url"`
 }
 
+type SupportUserInfo struct {
+	UserID   string `mapstructure:"userID"`
+	Nickname string `mapstructure:"nickname"`
+}
+
+type Support struct {
+	SupportUsers []SupportUserInfo `mapstructure:"supportUsers"`
+}
+
 type AllConfig struct {
 	AdminAPI  API
 	ChatAPI   API
@@ -217,6 +226,7 @@ type AllConfig struct {
 	Share     Share
 	LDAP      LDAP
 	RCToken   RCToken
+	Support   Support
 }
 
 func (a *AllConfig) Name2Config(name string) any {

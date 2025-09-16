@@ -16,17 +16,22 @@ package chat
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"time"
 
 	"github.com/openimsdk/chat/internal/api/util"
 
 	"github.com/gin-gonic/gin"
+	"github.com/openimsdk/chat/pkg/cache"
 	"github.com/openimsdk/chat/pkg/common/apistruct"
+	"github.com/openimsdk/chat/pkg/common/config"
+	chatdb "github.com/openimsdk/chat/pkg/common/db/database"
 	"github.com/openimsdk/chat/pkg/common/imapi"
 	"github.com/openimsdk/chat/pkg/common/mctx"
 	"github.com/openimsdk/chat/pkg/protocol/admin"
 	chatpb "github.com/openimsdk/chat/pkg/protocol/chat"
+	"github.com/openimsdk/chat/pkg/rctokenlogin"
 	constantpb "github.com/openimsdk/protocol/constant"
 	"github.com/openimsdk/protocol/sdkws"
 	"github.com/openimsdk/tools/a2r"
@@ -46,9 +51,13 @@ func New(chatClient chatpb.ChatClient, adminClient admin.AdminClient, imApiCalle
 
 type Api struct {
 	*util.Api
-	chatClient  chatpb.ChatClient
-	adminClient admin.AdminClient
-	imApiCaller imapi.CallerInterface
+	chatClient   chatpb.ChatClient
+	adminClient  admin.AdminClient
+	imApiCaller  imapi.CallerInterface
+	Support      config.Support
+	CacheManager *cache.CacheManager
+	RCToken      *rctokenlogin.Service
+	Database     chatdb.ChatDatabaseInterface
 }
 
 // ################## ACCOUNT ##################
@@ -240,6 +249,68 @@ func (o *Api) RCTokenLogin(c *gin.Context) {
 		ImToken:   imToken,
 		UserID:    resp.UserID,
 		ChatToken: resp.ChatToken,
+	})
+}
+
+// SupportUrls 获取客服用户列表
+func (o *Api) SupportUrls(c *gin.Context) {
+	source := c.Query("source")
+	rcToken := c.Query("token")
+	var supportUsers []apistruct.SupportUserInfo
+	var currentUserID string
+
+	if source != "" && rcToken != "" {
+		// 检查缓存
+		if userInfo, err := o.CacheManager.GetTokenInfo(c, rcToken); err == nil {
+			// 缓存命中，直接获取userID
+			currentUserID = userInfo.UserID
+			log.ZInfo(c, "Token cache hit", "userID", userInfo.UserID, "name", userInfo.Name, "email", userInfo.Email)
+		} else {
+			// 缓存未命中，验证瑞承token
+			rcUserInfo, err := o.RCToken.Authenticate(c, source, rcToken)
+			if err != nil {
+				apiresp.GinError(c, err)
+				return
+			}
+
+			// 通过邮箱查询用户在IM中的ID
+			userID, err := o.Database.GetUserIDByEmail(c, rcUserInfo.Email)
+			if err != nil {
+				log.ZWarn(c, "Failed to get userID by email", err, "email", rcUserInfo.Email)
+			} else {
+				currentUserID = userID
+				log.ZInfo(c, "User found by email", "email", rcUserInfo.Email, "userID", userID, "name", rcUserInfo.Name, "rcID", rcUserInfo.ID)
+			}
+
+			// 缓存完整的用户信息，包含userID，过期时间30分钟
+			cacheUserInfo := &cache.UserInfo{
+				ID:     rcUserInfo.ID,
+				Name:   rcUserInfo.Name,
+				Email:  rcUserInfo.Email,
+				UserID: userID, // 直接缓存userID
+			}
+			if err := o.CacheManager.SetTokenInfo(c, rcToken, cacheUserInfo, 30*time.Minute); err != nil {
+				log.ZWarn(c, "Failed to cache token info", err)
+			}
+		}
+	}
+
+	// 返回客服用户列表，包含聊天URL
+	for _, user := range o.Support.SupportUsers {
+		chatURL := ""
+		if currentUserID != "" {
+			chatURL = fmt.Sprintf("/#/chat/si_%s_%s", user.UserID, currentUserID)
+		}
+
+		supportUsers = append(supportUsers, apistruct.SupportUserInfo{
+			UserID:   user.UserID,
+			Nickname: user.Nickname,
+			ChatURL:  chatURL,
+		})
+	}
+
+	apiresp.GinSuccess(c, &apistruct.SupportUrlsResp{
+		SupportUsers: supportUsers,
 	})
 }
 

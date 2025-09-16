@@ -16,11 +16,26 @@ package apistruct
 
 import "github.com/openimsdk/protocol/sdkws"
 
+type SupportUserInfo struct {
+	UserID   string `json:"userID"`
+	Nickname string `json:"nickname"`
+	ChatURL  string `json:"chatURL"`
+}
+
+type SupportUrlsResp struct {
+	SupportUsers []SupportUserInfo `json:"supportUsers"`
+}
+
 type UserRegisterResp struct {
 	ImToken   string `json:"imToken"`
 	ChatToken string `json:"chatToken"`
 	UserID    string `json:"userID"`
 }
+
+// type SupportUserInfo struct {
+// 	SupportName string `json:"supportName"`
+// 	SupportUserID  string `json:"supportUserID"`
+// }
 
 type LoginResp struct {
 	ImToken   string `json:"imToken"`

@@ -18,6 +18,7 @@ var (
 	ChatRPCBotCfgFileName   = "chat-rpc-bot.yml"
 	LDAPConfigFileName      = "ldap.yml"
 	RCTokenConfigFileName   = "rctoken.yml"
+	SupportConfigFileName   = "support.yml"
 )
 
 var EnvPrefixMap map[string]string
@@ -36,6 +37,7 @@ func init() {
 		ChatRPCChatCfgFileName,
 		LDAPConfigFileName,
 		RCTokenConfigFileName,
+		SupportConfigFileName,
 	}
 
 	for _, fileName := range fileNames {
