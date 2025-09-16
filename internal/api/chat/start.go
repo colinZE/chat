@@ -131,6 +131,7 @@ func SetChatRoute(router gin.IRouter, chat *Api, mw *chatmw.MW) {
 	account.POST("/code/verify", chat.VerifyCode)                        // Verify the verification code
 	account.POST("/register", mw.CheckAdminOrNil, chat.RegisterUser)     // Register
 	account.POST("/login", chat.Login)                                   // Login
+	account.POST("/rc/login", chat.RCTokenLogin)                         // 瑞承Token登录
 	account.POST("/password/reset", chat.ResetPassword)                  // Forgot password
 	account.POST("/password/change", mw.CheckToken, chat.ChangePassword) // Change password
 

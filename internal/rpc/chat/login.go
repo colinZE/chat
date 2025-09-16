@@ -22,6 +22,7 @@ import (
 	chatdb "github.com/openimsdk/chat/pkg/common/db/table/chat"
 	"github.com/openimsdk/chat/pkg/eerrs"
 	"github.com/openimsdk/chat/pkg/protocol/chat"
+	"github.com/openimsdk/chat/pkg/rctokenlogin"
 )
 
 type verifyType int
@@ -545,4 +546,44 @@ func (o *chatSvr) Login(ctx context.Context, req *chat.LoginReq) (*chat.LoginRes
 	resp.UserID = userID
 	resp.ChatToken = chatToken.Token
 	return resp, nil
+}
+
+// RCTokenLogin 瑞承Token登录
+func (o *chatSvr) RCTokenLogin(ctx context.Context, req *chat.RCTokenLoginReq) (*chat.RCTokenLoginResp, error) {
+
+	// 1. 验证瑞承token
+	var userInfo *rctokenlogin.UserInfo
+	var err error
+	userInfo, err = o.RCToken.Authenticate(ctx, req.Source, req.Token)
+	if err != nil {
+		return nil, eerrs.ErrPassword.Wrap()
+	}
+
+	// 2. 同步用户到数据库
+	userID, err := o.Database.SyncRCTokenUser(ctx, userInfo, userInfo.Email)
+	if err != nil {
+		return nil, err
+	}
+
+	// 3. 生成ChatToken
+	chatToken, err := o.Admin.CreateToken(ctx, userID, constant.NormalUser)
+	if err != nil {
+		return nil, err
+	}
+
+	// 4. 记录登录
+	err = o.Database.LoginRecord(ctx, &chatdb.UserLoginRecord{
+		UserID:    userID,
+		LoginTime: time.Now(),
+		IP:        "", // IP在API层获取
+		Platform:  constantpb.PlatformIDToName(int(req.Platform)),
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return &chat.RCTokenLoginResp{
+		ChatToken: chatToken.Token,
+		UserID:    userID,
+	}, nil
 }

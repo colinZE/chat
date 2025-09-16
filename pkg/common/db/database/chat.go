@@ -30,6 +30,7 @@ import (
 	"github.com/openimsdk/chat/pkg/common/db/table/admin"
 	chatdb "github.com/openimsdk/chat/pkg/common/db/table/chat"
 	"github.com/openimsdk/chat/pkg/ldap"
+	"github.com/openimsdk/chat/pkg/rctokenlogin"
 )
 
 type ChatDatabaseInterface interface {
@@ -60,6 +61,7 @@ type ChatDatabaseInterface interface {
 	UserLoginCountRangeEverydayTotal(ctx context.Context, start *time.Time, end *time.Time) (map[string]int64, int64, error)
 	DelUserAccount(ctx context.Context, userIDs []string) error
 	SyncLDAPUser(ctx context.Context, userInfo *ldap.UserInfo, account string) (string, error)
+	SyncRCTokenUser(ctx context.Context, userInfo *rctokenlogin.UserInfo, account string) (string, error)
 }
 
 func NewChatDatabase(cli *mongoutil.Client) (ChatDatabaseInterface, error) {
@@ -431,4 +433,121 @@ func (o *ChatDatabase) genUserID() string {
 		}
 	}
 	return string(data)
+}
+
+// SyncRCTokenUser 同步瑞承用户信息到本地数据库
+func (o *ChatDatabase) SyncRCTokenUser(ctx context.Context, userInfo *rctokenlogin.UserInfo, account string) (string, error) {
+	// 尝试通过邮箱查找用户记录
+	credential, err := o.credential.TakeAccount(ctx, userInfo.Email)
+	if err != nil {
+		if dbutil.IsDBNotFound(err) {
+			// 用户不存在，创建新用户
+			return o.createRCTokenUser(ctx, userInfo, account)
+		}
+		return "", err
+	}
+
+	// 用户已存在，智能更新用户信息
+	userID := credential.UserID
+	err = o.updateRCTokenUserSmart(ctx, userID, userInfo)
+	if err != nil {
+		return "", err
+	}
+
+	return userID, nil
+}
+
+// createRCTokenUser 创建新的瑞承用户
+func (o *ChatDatabase) createRCTokenUser(ctx context.Context, userInfo *rctokenlogin.UserInfo, account string) (string, error) {
+	userID := o.genUserID()
+	now := time.Now()
+
+	// 创建用户凭证记录 - 使用邮箱作为登录凭证
+	credential := &chatdb.Credential{
+		UserID:      userID,
+		Account:     userInfo.Email, // 使用瑞承的邮箱作为登录账号
+		Type:        constant.CredentialEmail,
+		AllowChange: false, // 瑞承用户不允许修改账号
+	}
+
+	// 创建用户账号记录（不存储密码）
+	accountRecord := &chatdb.Account{
+		UserID:         userID,
+		Password:       "", // 瑞承用户不存储密码
+		OperatorUserID: "", // 瑞承用户创建时没有操作者
+		ChangeTime:     now,
+		CreateTime:     now,
+	}
+
+	// 创建用户属性记录
+	attribute := &chatdb.Attribute{
+		UserID:         userID,
+		Account:        userInfo.ID,
+		PhoneNumber:    "", // 瑞承API没有返回手机号
+		AreaCode:       "",
+		Email:          userInfo.Email,
+		Nickname:       userInfo.Name,
+		FaceURL:        "",
+		Gender:         0,           // 默认值
+		BirthTime:      time.Time{}, // 默认值
+		ChangeTime:     now,
+		CreateTime:     now,
+		AllowVibration: constant.DefaultAllowVibration,
+		AllowBeep:      constant.DefaultAllowBeep,
+		AllowAddFriend: constant.DefaultAllowAddFriend,
+		RegisterType:   constant.RCTokenRegister,
+	}
+
+	// 创建注册记录
+	register := &chatdb.Register{
+		UserID:      userID,
+		DeviceID:    "", // 登录时获取
+		IP:          "", // 登录时获取
+		Platform:    "RCToken",
+		AccountType: "RCToken",
+		Mode:        constant.UserMode,
+		CreateTime:  now,
+	}
+
+	// 保存到数据库
+	err := o.RegisterUser(ctx, register, accountRecord, attribute, []*chatdb.Credential{credential})
+	if err != nil {
+		return "", err
+	}
+
+	return userID, nil
+}
+
+// updateRCTokenUserSmart 智能更新瑞承用户信息，不覆盖用户自定义字段
+func (o *ChatDatabase) updateRCTokenUserSmart(ctx context.Context, userID string, userInfo *rctokenlogin.UserInfo) error {
+	// 获取当前用户信息
+	currentAttr, err := o.attribute.Take(ctx, userID)
+	if err != nil {
+		return err
+	}
+
+	// 只更新瑞承提供的字段，保留用户自定义的字段
+	updateData := map[string]any{
+		"change_time": time.Now(),
+	}
+
+	// 只更新瑞承有值的字段，如果用户已经自定义了昵称，则不覆盖
+	if userInfo.Email != "" && userInfo.Email != currentAttr.Email {
+		updateData["email"] = userInfo.Email
+	}
+
+	// 昵称策略：如果用户没有自定义昵称（还是瑞承的Name），则更新
+	// 如果用户已经自定义了昵称，则不覆盖
+	if userInfo.Name != "" && currentAttr.Nickname == currentAttr.Account {
+		// 如果当前昵称还是账号名（说明用户没有自定义），则更新为瑞承的Name
+		updateData["nickname"] = userInfo.Name
+	}
+
+	// 如果没有需要更新的字段，直接返回
+	if len(updateData) <= 1 { // 只有change_time
+		return nil
+	}
+
+	// 使用UpdateUseInfo方法更新用户信息
+	return o.UpdateUseInfo(ctx, userID, updateData, nil, nil)
 }

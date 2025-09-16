@@ -288,6 +288,19 @@ message GetAllowRegisterResp {
   bool allowRegister = 1;
 }
 
+// 瑞承Token登录相关消息
+message RCTokenLoginReq {
+  string source = 1;  // 来源标识，如"ai_rc"
+  string token = 2;   // 瑞承token
+  int32 platform = 3; // 平台类型（必需）
+}
+
+message RCTokenLoginResp {
+  string chatToken = 1;
+  string userID = 2;
+  int64 expireTimeSeconds = 3;
+}
+
 
 service chat {
   // Edit personal information - called by the user or an administrator
@@ -323,4 +336,5 @@ service chat {
 
   rpc SetAllowRegister(SetAllowRegisterReq) returns(SetAllowRegisterResp);
   rpc GetAllowRegister(GetAllowRegisterReq) returns(GetAllowRegisterResp);
+  rpc RCTokenLogin(RCTokenLoginReq) returns (RCTokenLoginResp);
 }

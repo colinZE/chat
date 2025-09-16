@@ -200,6 +200,11 @@ type LDAP struct {
 	UserFilter   string   `mapstructure:"UserFilter"`
 }
 
+type RCToken struct {
+	Enable bool   `mapstructure:"enable"`
+	URL    string `mapstructure:"url"`
+}
+
 type AllConfig struct {
 	AdminAPI  API
 	ChatAPI   API
@@ -211,6 +216,7 @@ type AllConfig struct {
 	Redis     Redis
 	Share     Share
 	LDAP      LDAP
+	RCToken   RCToken
 }
 
 func (a *AllConfig) Name2Config(name string) any {

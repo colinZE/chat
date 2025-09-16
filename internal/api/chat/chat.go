@@ -199,6 +199,50 @@ func (o *Api) Login(c *gin.Context) {
 	})
 }
 
+// RCTokenLogin 瑞承Token登录
+func (o *Api) RCTokenLogin(c *gin.Context) {
+	req, err := a2r.ParseRequest[chatpb.RCTokenLoginReq](c)
+	if err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+
+	// 调用RPC方法
+	resp, err := o.chatClient.RCTokenLogin(c, req)
+	if err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+
+	// 获取OpenIM管理员token
+	adminToken, err := o.imApiCaller.ImAdminTokenWithDefaultAdmin(c)
+	if err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+	apiCtx := mctx.WithApiToken(c, adminToken)
+
+	// 确保用户在OpenIM中存在
+	if err := o.ensureUserInOpenIM(apiCtx, resp.UserID, ""); err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+
+	// 获取ImToken
+	imToken, err := o.imApiCaller.GetUserToken(apiCtx, resp.UserID, req.Platform)
+	if err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+
+	// 返回完整响应
+	apiresp.GinSuccess(c, &apistruct.LoginResp{
+		ImToken:   imToken,
+		UserID:    resp.UserID,
+		ChatToken: resp.ChatToken,
+	})
+}
+
 func (o *Api) ResetPassword(c *gin.Context) {
 	a2r.Call(c, chatpb.ChatClient.ResetPassword, o.chatClient)
 }

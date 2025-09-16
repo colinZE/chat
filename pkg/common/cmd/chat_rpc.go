@@ -40,6 +40,7 @@ func NewChatRpcCmd() *ChatRpcCmd {
 		config.MongodbConfigFileName:   &ret.chatConfig.MongodbConfig,
 		config.ShareFileName:           &ret.chatConfig.Share,
 		config.LDAPConfigFileName:      &ret.chatConfig.LDAP,
+		config.RCTokenConfigFileName:   &ret.chatConfig.RCToken,
 	}
 	ret.RootCmd = NewRootCmd(program.GetProcessName(), WithConfigMap(ret.configMap))
 	ret.ctx = context.WithValue(context.Background(), "version", config.Version)

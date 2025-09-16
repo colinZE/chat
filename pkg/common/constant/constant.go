@@ -104,6 +104,7 @@ const (
 	EmailRegister
 	PhoneRegister
 	LDAPRegister
+	RCTokenRegister
 )
 
 const (
