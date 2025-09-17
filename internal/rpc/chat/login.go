@@ -550,14 +550,25 @@ func (o *chatSvr) Login(ctx context.Context, req *chat.LoginReq) (*chat.LoginRes
 
 // RCTokenLogin 瑞承Token登录
 func (o *chatSvr) RCTokenLogin(ctx context.Context, req *chat.RCTokenLoginReq) (*chat.RCTokenLoginResp, error) {
+	log.ZInfo(ctx, "开始瑞承Token登录", "来源", req.Source, "平台", req.Platform, "Token长度", len(req.Token))
 
 	// 1. 验证瑞承token
 	var userInfo *rctokenlogin.UserInfo
 	var err error
 	userInfo, err = o.RCToken.Authenticate(ctx, req.Source, req.Token)
 	if err != nil {
-		return nil, eerrs.ErrPassword.Wrap()
+		log.ZError(ctx, "瑞承Token验证失败", err, "来源", req.Source, "Token长度", len(req.Token))
+		// 根据错误类型返回不同的错误码
+		if strings.Contains(err.Error(), "failed to send request") {
+			return nil, eerrs.ErrTokenNotExist.WrapMsg("网络连接失败，请稍后重试")
+		} else if strings.Contains(err.Error(), "RC API error") {
+			return nil, eerrs.ErrTokenNotExist.WrapMsg("Token验证失败，请重新登录")
+		} else {
+			return nil, eerrs.ErrPassword.Wrap()
+		}
 	}
+
+	log.ZInfo(ctx, "瑞承Token验证成功", "用户ID", userInfo.ID, "用户名称", userInfo.Name, "邮箱", userInfo.Email)
 
 	// 2. 同步用户到数据库
 	userID, err := o.Database.SyncRCTokenUser(ctx, userInfo, userInfo.Email)

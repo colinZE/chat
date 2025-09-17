@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/openimsdk/tools/log"
 )
 
 type Service struct {
@@ -56,6 +58,40 @@ func (s *Service) Enable() bool {
 }
 
 func (s *Service) Authenticate(ctx context.Context, source, token string) (*UserInfo, error) {
+	return s.authenticateWithRetry(ctx, source, token, 3)
+}
+
+func (s *Service) authenticateWithRetry(ctx context.Context, source, token string, maxRetries int) (*UserInfo, error) {
+	var lastErr error
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		log.ZInfo(ctx, "瑞承Token验证尝试", "尝试次数", attempt, "最大重试", maxRetries, "来源", source, "Token长度", len(token), "API地址", s.config.URL)
+
+		userInfo, err := s.authenticateOnce(ctx, source, token)
+		if err == nil {
+			if attempt > 1 {
+				log.ZInfo(ctx, "瑞承Token验证重试成功", "尝试次数", attempt, "用户ID", userInfo.ID, "用户名称", userInfo.Name, "邮箱", userInfo.Email)
+			}
+			return userInfo, nil
+		}
+
+		lastErr = err
+		log.ZWarn(ctx, "瑞承Token验证尝试失败", err, "尝试次数", attempt, "最大重试", maxRetries)
+
+		// 如果不是最后一次尝试，等待一段时间后重试
+		if attempt < maxRetries {
+			// 指数退避：1秒、2秒、4秒
+			waitTime := time.Duration(attempt) * time.Second
+			log.ZInfo(ctx, "等待重试", "等待时间", waitTime)
+			time.Sleep(waitTime)
+		}
+	}
+
+	log.ZError(ctx, "瑞承Token验证最终失败", lastErr, "最大重试次数", maxRetries)
+	return nil, lastErr
+}
+
+func (s *Service) authenticateOnce(ctx context.Context, source, token string) (*UserInfo, error) {
 	// 构建请求体
 	reqBody := RCTokenLoginReq{
 		Source: source,
@@ -64,12 +100,14 @@ func (s *Service) Authenticate(ctx context.Context, source, token string) (*User
 
 	jsonData, err := json.Marshal(reqBody)
 	if err != nil {
+		log.ZError(ctx, "构建请求体失败", err)
 		return nil, fmt.Errorf("failed to marshal request body: %w", err)
 	}
 
 	// 创建POST请求
 	req, err := http.NewRequestWithContext(ctx, "POST", s.config.URL, bytes.NewBuffer(jsonData))
 	if err != nil {
+		log.ZError(ctx, "创建请求失败", err)
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
@@ -77,27 +115,38 @@ func (s *Service) Authenticate(ctx context.Context, source, token string) (*User
 	req.Header.Set("Content-Type", "application/json")
 
 	// 发送请求
+	log.ZInfo(ctx, "发送请求到瑞承API", "API地址", s.config.URL)
 	resp, err := s.client.Do(req)
 	if err != nil {
+		log.ZError(ctx, "发送请求到瑞承API失败", err, "API地址", s.config.URL)
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
 
+	log.ZInfo(ctx, "收到瑞承API响应", "状态码", resp.StatusCode)
+
 	// 检查HTTP状态码
 	if resp.StatusCode != http.StatusOK {
+		log.ZError(ctx, "瑞承API返回非200状态码", nil, "状态码", resp.StatusCode)
 		return nil, fmt.Errorf("RC API returned status: %d", resp.StatusCode)
 	}
 
 	// 解析响应
 	var apiResp RCTokenLoginResp
 	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		log.ZError(ctx, "解析瑞承API响应失败", err)
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
+	log.ZInfo(ctx, "瑞承API响应解析成功", "业务状态码", apiResp.Code, "消息", apiResp.Msg, "详细消息", apiResp.Message)
+
 	// 检查业务状态码 - 瑞承API成功时返回"A10001"
 	if apiResp.Code != "A10001" {
+		log.ZError(ctx, "瑞承API返回错误状态码", nil, "业务状态码", apiResp.Code, "消息", apiResp.Msg, "详细消息", apiResp.Message)
 		return nil, fmt.Errorf("RC API error: code=%s, msg=%s, message=%s", apiResp.Code, apiResp.Msg, apiResp.Message)
 	}
+
+	log.ZInfo(ctx, "瑞承Token验证成功", "用户ID", apiResp.Data.ID, "用户名称", apiResp.Data.Name, "邮箱", apiResp.Data.Email)
 
 	// 返回用户信息
 	return &UserInfo{
