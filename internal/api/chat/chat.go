@@ -276,8 +276,32 @@ func (o *Api) SupportUrls(c *gin.Context) {
 			// 通过邮箱查询用户在IM中的ID
 			userID, err := o.Database.GetUserIDByEmail(c, rcUserInfo.Email)
 			if err != nil {
-				log.ZWarn(c, "Failed to get userID by email", err, "email", rcUserInfo.Email)
+				// 用户不存在，需要注册到chat和OpenIM
+				log.ZInfo(c, "User not found in IM system, registering new user", "email", rcUserInfo.Email, "rcID", rcUserInfo.ID, "name", rcUserInfo.Name)
+
+				// 注册用户到chat数据库
+				userID, err = o.Database.SyncRCTokenUser(c, &rctokenlogin.UserInfo{
+					ID:    rcUserInfo.ID,
+					Name:  rcUserInfo.Name,
+					Email: rcUserInfo.Email,
+				}, rcUserInfo.Email)
+				if err != nil {
+					log.ZError(c, "Failed to register user to chat database", err, "email", rcUserInfo.Email)
+					// 注册失败，不设置currentUserID，这样不会生成聊天URL
+					currentUserID = ""
+				} else {
+					// 注册成功，确保用户在OpenIM中存在
+					if err := o.ensureUserInOpenIM(c, userID, rcUserInfo.Name); err != nil {
+						log.ZError(c, "Failed to ensure user in OpenIM", err, "userID", userID)
+						// OpenIM注册失败，也不设置currentUserID
+						currentUserID = ""
+					} else {
+						currentUserID = userID
+						log.ZInfo(c, "User registered successfully", "email", rcUserInfo.Email, "userID", userID, "name", rcUserInfo.Name, "rcID", rcUserInfo.ID)
+					}
+				}
 			} else {
+				// 用户已存在
 				currentUserID = userID
 				log.ZInfo(c, "User found by email", "email", rcUserInfo.Email, "userID", userID, "name", rcUserInfo.Name, "rcID", rcUserInfo.ID)
 			}
@@ -299,7 +323,7 @@ func (o *Api) SupportUrls(c *gin.Context) {
 	for _, user := range o.Support.SupportUsers {
 		chatURL := ""
 		if currentUserID != "" {
-			chatURL = fmt.Sprintf("/#/chat/si_%s_%s", user.UserID, currentUserID)
+			chatURL = fmt.Sprintf("/chat/si_%s_%s", user.UserID, currentUserID)
 		}
 
 		supportUsers = append(supportUsers, apistruct.SupportUserInfo{
