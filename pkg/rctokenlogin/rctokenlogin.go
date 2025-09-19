@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/openimsdk/tools/log"
@@ -77,6 +78,12 @@ func (s *Service) authenticateWithRetry(ctx context.Context, source, token strin
 
 		lastErr = err
 		log.ZWarn(ctx, "瑞承Token验证尝试失败", err, "尝试次数", attempt, "最大重试", maxRetries)
+
+		// 检查是否为业务错误，业务错误不重试
+		if s.isBusinessError(err) {
+			log.ZInfo(ctx, "检测到业务错误，不进行重试", "错误", err.Error())
+			return nil, err
+		}
 
 		// 如果不是最后一次尝试，等待一段时间后重试
 		if attempt < maxRetries {
@@ -154,4 +161,29 @@ func (s *Service) authenticateOnce(ctx context.Context, source, token string) (*
 		Name:  apiResp.Data.Name,
 		Email: apiResp.Data.Email,
 	}, nil
+}
+
+// isBusinessError 判断是否为业务错误（不需要重试的错误）
+func (s *Service) isBusinessError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	errStr := err.Error()
+
+	// 业务错误：Token无效、用户不存在等
+	if strings.Contains(errStr, "RC API error") {
+		return true
+	}
+
+	// 网络错误：连接超时、DNS解析失败等（需要重试）
+	if strings.Contains(errStr, "failed to send request") ||
+		strings.Contains(errStr, "timeout") ||
+		strings.Contains(errStr, "connection refused") ||
+		strings.Contains(errStr, "no such host") {
+		return false
+	}
+
+	// 默认情况下，其他错误也认为是业务错误，不重试
+	return true
 }

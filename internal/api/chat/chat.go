@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+
 	"time"
 
 	"github.com/openimsdk/chat/internal/api/util"
@@ -270,8 +271,10 @@ func (o *Api) SupportUrls(c *gin.Context) {
 			rcUserInfo, err := o.RCToken.Authenticate(c, source, rcToken)
 			if err != nil {
 				apiresp.GinError(c, err)
+				log.ZError(c, "请求瑞承接口获取用户信息失败", err)
 				return
 			}
+			log.ZInfo(c, "请求瑞承接口获取用户信息:", "rcID", rcUserInfo.ID, "name", rcUserInfo.Name, "email", rcUserInfo.Email)
 
 			// 通过邮箱查询用户在IM中的ID
 			userID, err := o.Database.GetUserIDByEmail(c, rcUserInfo.Email)
@@ -332,6 +335,7 @@ func (o *Api) SupportUrls(c *gin.Context) {
 			ChatURL:  chatURL,
 		})
 	}
+	log.ZInfo(c, "source", source, "rcToken", rcToken, "客服用户列表", "supportUsers", supportUsers)
 
 	apiresp.GinSuccess(c, &apistruct.SupportUrlsResp{
 		SupportUsers: supportUsers,
@@ -505,6 +509,9 @@ func (o *Api) PageApplicationVersion(c *gin.Context) {
 
 // ensureUserInOpenIM 确保用户在OpenIM中存在
 func (o *Api) ensureUserInOpenIM(ctx context.Context, userID string, email string) error {
+	// 为ctx添加operationID，OpenIM框架要求所有RPC调用都必须包含operationID
+	ctx = context.WithValue(ctx, constantpb.OperationID, "ensureUserInOpenIM_"+userID)
+
 	// 从chat数据库获取用户信息
 	userInfo, err := o.chatClient.FindUserPublicInfo(ctx, &chatpb.FindUserPublicInfoReq{UserIDs: []string{userID}})
 	if err != nil {
@@ -544,14 +551,7 @@ func (o *Api) ensureUserInOpenIM(ctx context.Context, userID string, email strin
 				log.ZInfo(ctx, "User nickname updated in OpenIM", "userID", userID, "nickname", chatUser.Nickname)
 			}
 		}
-
-		// 重新注册以确保状态正确（解决GetUserToken失败的问题）
-		err = o.imApiCaller.RegisterUser(ctx, []*sdkws.UserInfo{imUser})
-		if err != nil {
-			log.ZWarn(ctx, "Failed to re-register user in OpenIM", err, "userID", userID)
-		} else {
-			log.ZInfo(ctx, "User re-registered in OpenIM", "userID", userID, "nickname", chatUser.Nickname)
-		}
+		log.ZInfo(ctx, "User already exists in OpenIM", "userID", userID, "nickname", chatUser.Nickname)
 	}
 
 	return nil
