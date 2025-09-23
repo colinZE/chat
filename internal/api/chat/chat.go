@@ -39,6 +39,7 @@ import (
 	"github.com/openimsdk/tools/apiresp"
 	"github.com/openimsdk/tools/errs"
 	"github.com/openimsdk/tools/log"
+	"github.com/openimsdk/tools/mcontext"
 )
 
 func New(chatClient chatpb.ChatClient, adminClient admin.AdminClient, imApiCaller imapi.CallerInterface, api *util.Api) *Api {
@@ -225,7 +226,9 @@ func (o *Api) RCTokenLogin(c *gin.Context) {
 	}
 
 	// 获取OpenIM管理员token
-	adminToken, err := o.imApiCaller.ImAdminTokenWithDefaultAdmin(c)
+	// 确保context包含operationID
+	ctx := mcontext.SetOperationID(c, "RCTokenLogin_"+mcontext.GetOperationID(c))
+	adminToken, err := o.imApiCaller.ImAdminTokenWithDefaultAdmin(ctx)
 	if err != nil {
 		apiresp.GinError(c, err)
 		return
@@ -532,18 +535,44 @@ func (o *Api) ensureUserInOpenIM(ctx context.Context, userID string, email strin
 
 	// 检查用户是否已在OpenIM中存在
 	users, err := o.imApiCaller.GetUsersInfo(ctx, []string{userID})
-	if err != nil || len(users) == 0 {
-		// 用户不存在，注册用户
+	if err != nil {
+		log.ZWarn(ctx, "Failed to get user info from OpenIM", err, "userID", userID)
+		// 获取用户信息失败，尝试注册用户
 		err = o.imApiCaller.RegisterUser(ctx, []*sdkws.UserInfo{imUser})
 		if err != nil {
+			log.ZError(ctx, "Failed to register user in OpenIM after GetUsersInfo failed", err, "userID", userID, "nickname", chatUser.Nickname)
 			return err
 		}
-		log.ZInfo(ctx, "User registered in OpenIM", "userID", userID, "nickname", chatUser.Nickname)
+		log.ZInfo(ctx, "User registered in OpenIM after GetUsersInfo failed", "userID", userID, "nickname", chatUser.Nickname)
+	} else if len(users) == 0 {
+		// 用户不存在，注册用户
+		log.ZInfo(ctx, "User not found in OpenIM, attempting to register", "userID", userID, "nickname", chatUser.Nickname)
+		err = o.imApiCaller.RegisterUser(ctx, []*sdkws.UserInfo{imUser})
+		if err != nil {
+			log.ZError(ctx, "Failed to register user in OpenIM", err, "userID", userID, "nickname", chatUser.Nickname)
+			return err
+		}
+		log.ZInfo(ctx, "User successfully registered in OpenIM", "userID", userID, "nickname", chatUser.Nickname)
+
+		// 验证用户是否真的注册成功
+		time.Sleep(100 * time.Millisecond) // 等待数据同步
+		verifyUsers, verifyErr := o.imApiCaller.GetUsersInfo(ctx, []string{userID})
+		if verifyErr != nil {
+			log.ZWarn(ctx, "Failed to verify user registration", verifyErr, "userID", userID)
+		} else if len(verifyUsers) == 0 {
+			log.ZError(ctx, "User registration failed - user still not found after registration", nil, "userID", userID)
+			return errs.New("user registration failed - user still not found after registration").Wrap()
+		} else {
+			log.ZInfo(ctx, "User registration verified successfully", "userID", userID, "nickname", verifyUsers[0].Nickname)
+		}
 	} else {
 		// 用户已存在，检查是否需要更新信息
 		existingUser := users[0]
+		log.ZInfo(ctx, "User already exists in OpenIM", "userID", userID, "nickname", existingUser.Nickname, "existingNickname", existingUser.Nickname)
+
 		if existingUser.Nickname != chatUser.Nickname {
 			// 更新用户昵称
+			log.ZInfo(ctx, "Updating user nickname in OpenIM", "userID", userID, "oldNickname", existingUser.Nickname, "newNickname", chatUser.Nickname)
 			err = o.imApiCaller.UpdateUserInfo(ctx, userID, chatUser.Nickname, chatUser.FaceURL)
 			if err != nil {
 				log.ZWarn(ctx, "Failed to update user nickname in OpenIM", err, "userID", userID)
@@ -551,7 +580,6 @@ func (o *Api) ensureUserInOpenIM(ctx context.Context, userID string, email strin
 				log.ZInfo(ctx, "User nickname updated in OpenIM", "userID", userID, "nickname", chatUser.Nickname)
 			}
 		}
-		log.ZInfo(ctx, "User already exists in OpenIM", "userID", userID, "nickname", chatUser.Nickname)
 	}
 
 	return nil
